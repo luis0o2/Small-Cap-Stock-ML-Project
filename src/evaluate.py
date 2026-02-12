@@ -41,46 +41,48 @@ def evaluate_classifier(y_true, y_pred, *, title: str = "Validation"):
     return cm
 
 
-def actions_from_proba(probs, p_long: float, p_short: float):
+def actions_from_proba(probs, p_long, p_short, delta=0.10):
     """
-    Convert model probabilities into trading actions {-1,0,1}.
+    Convert probabilities into trading actions {-1, 0, 1}
+    using BOTH absolute confidence and a margin vs NO_TRADE.
 
-    probs: ndarray of shape (N, 3)
-           IMPORTANT: columns MUST correspond to class order [-1,0,1]
-           That means:
-             probs[:,0] = P(SHORT)
-             probs[:,1] = P(NO_TRADE)
-             probs[:,2] = P(LONG)
-
-    Rule:
-    - If P(LONG) >= p_long AND it's the max among classes -> LONG
-    - Else if P(SHORT) >= p_short AND it's the max among classes -> SHORT
-    - Else NO_TRADE
+    probs columns must be ordered as:
+    [P(SHORT), P(NO_TRADE), P(LONG)]
     """
     probs = np.asarray(probs, dtype=float)
 
     if probs.ndim != 2 or probs.shape[1] != 3:
-        raise ValueError(f"Expected probs shape (N,3). Got {probs.shape}.")
+        raise ValueError(f"Expected probs shape (N,3). Got {probs.shape}")
 
+    # Extract class probabilities
     p_short_col = probs[:, 0]
-    p_long_col = probs[:, 2]
+    p_no_col    = probs[:, 1]
+    p_long_col  = probs[:, 2]
 
-    # winner is the class with the highest probability for each row
-    # 0=SHORT, 1=NO_TRADE, 2=LONG (because our column order is [-1,0,1])
+    # Winner class index: 0=SHORT, 1=NO, 2=LONG
     winner = np.argmax(probs, axis=1)
 
-    actions = np.zeros(len(probs), dtype=int)  # default is NO_TRADE (0)
+    actions = np.zeros(len(probs), dtype=int)  # default NO_TRADE
 
-    # LONG if:
-    # - LONG is the most probable class (winner==2)
-    # - and it clears the threshold p_long
-    long_mask = (winner == 2) & (p_long_col >= p_long)
+    # --- NEW: margin conditions ---
+    long_margin  = p_long_col - p_no_col
+    short_margin = p_short_col - p_no_col
+
+    # LONG decision
+    long_mask = (
+        (winner == 2) &                 # LONG is most likely
+        (p_long_col >= p_long) &        # absolute confidence
+        (long_margin >= delta)          # confidence gap vs NO_TRADE
+    )
+
+    # SHORT decision
+    short_mask = (
+        (winner == 0) &                 # SHORT is most likely
+        (p_short_col >= p_short) &      # absolute confidence
+        (short_margin >= delta)         # confidence gap vs NO_TRADE
+    )
+
     actions[long_mask] = 1
-
-    # SHORT if:
-    # - SHORT is the most probable class (winner==0)
-    # - and it clears the threshold p_short
-    short_mask = (winner == 0) & (p_short_col >= p_short)
     actions[short_mask] = -1
 
     return actions
@@ -154,6 +156,7 @@ def threshold_sweep(
     probs,
     future_returns=None,
     thresholds=(0.50, 0.55, 0.60, 0.65),
+    delta: float = 0.10,            # <-- add this
     cost_bps: float = 3.0,
     title: str = "Threshold sweep",
 ):

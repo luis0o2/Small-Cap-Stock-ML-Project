@@ -54,13 +54,11 @@ def main():
 
     future_returns = val_df[ret_col].to_numpy(dtype=float)
 
-    threshold_sweep(
-        probs,
-        future_returns=future_returns,
-        thresholds=(0.50, 0.55, 0.60, 0.65),
-        cost_bps=3.0,
-        title=f"Threshold sweep on val ({ret_col})",
-    )
+    threshold_sweep(probs, future_returns=future_returns,
+                thresholds=(0.50,0.55,0.60,0.65),
+                delta=0.20,
+                title="Threshold sweep (delta=0.20)")
+
 
 
 if __name__ == "__main__":
