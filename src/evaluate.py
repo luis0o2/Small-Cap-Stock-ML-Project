@@ -145,6 +145,26 @@ def summarize_backtest(actions, future_returns, cost_bps: float = 3.0):
         "total_return": total_return,
     }
     
+    
+
+def long_only_baseline(future_returns, cost_bps: float = 3.0):
+    r = np.asarray(future_returns, dtype=float)
+    cost = cost_bps / 10_000.0
+    pnl = r - cost  # always long, always pay cost
+
+    wins = pnl[pnl > 0].sum()
+    losses = -pnl[pnl < 0].sum()
+
+    pf = float("inf") if (losses == 0 and wins > 0) else (float(wins / losses) if losses > 0 else 0.0)
+
+    return {
+        "num_trades": int(len(r)),
+        "win_rate": float((pnl > 0).mean()),
+        "avg_trade": float(pnl.mean()),
+        "profit_factor": pf,
+        "total_return": float(pnl.sum()),
+    }
+
 def side_breakdown(actions, future_returns, cost_bps: float = 3.0):
     actions = np.asarray(actions, dtype=int)
     r = np.asarray(future_returns, dtype=float)

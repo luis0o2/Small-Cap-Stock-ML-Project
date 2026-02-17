@@ -93,8 +93,13 @@ def main():
     test_stats = summarize_backtest(test_actions, test_returns, cost_bps=3.0)
 
     print("\n=== FINAL Trading-style TEST report (thresholds chosen on VAL) ===")
-    print(f"Using pL={best_pL:.2f}, pS={best_pS:.2f}, delta=0.20")
+    print(f"Using pL={best_pL:.2f}, pS={best_pS:.2f}, delta={best_delta:.2f}")
     print(test_stats)
+    
+    from src.evaluate import long_only_baseline
+    print("\nTEST long-only baseline:")
+    print(long_only_baseline(test_returns, cost_bps=3.0))
+
 
     from src.evaluate import side_breakdown
     print("\nTEST side breakdown:")
