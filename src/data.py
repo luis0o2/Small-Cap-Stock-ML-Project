@@ -1,3 +1,4 @@
+# DATA.PY
 import pandas as pd
 
 
@@ -19,7 +20,7 @@ def load_dataset(csv_path: str) -> pd.DataFrame:
 
     # Make headlines safe
     df = df.copy()
-    df[REQUIRED_TEXT_COL] = df[REQUIRED_TEXT_COL].astype(str).fillna("")
+    df[REQUIRED_TEXT_COL] = df[REQUIRED_TEXT_COL].fillna("").astype(str)
 
     # If label exists, ensure it's numeric-ish (we won't force it if user wants retrieval-only)
     if DEFAULT_LABEL_COL in df.columns:
@@ -95,3 +96,34 @@ def time_train_val_split(df: pd.DataFrame, train_frac: float = 0.8) -> tuple[pd.
     val_df = df.iloc[split_idx:].copy().reset_index(drop=True)
 
     return train_df, val_df
+
+
+
+def time_train_val_test_split(
+    df: pd.DataFrame,
+    train_frac: float = 0.70,
+    val_frac: float = 0.15,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Time-aware split into train/val/test with no shuffle.
+    Fractions are for train and val; test gets the remainder.
+    """
+    if not (0.5 < train_frac < 0.9):
+        raise ValueError("train_frac should usually be between 0.5 and 0.9.")
+    if not (0.05 < val_frac < 0.4):
+        raise ValueError("val_frac should usually be between 0.05 and 0.4.")
+    if train_frac + val_frac >= 0.95:
+        raise ValueError("train_frac + val_frac must leave room for test.")
+
+    n = len(df)
+    if n < 200:
+        raise ValueError("Dataset too small for a meaningful 3-way split.")
+
+    train_end = int(n * train_frac)
+    val_end = int(n * (train_frac + val_frac))
+
+    train_df = df.iloc[:train_end].copy().reset_index(drop=True)
+    val_df   = df.iloc[train_end:val_end].copy().reset_index(drop=True)
+    test_df  = df.iloc[val_end:].copy().reset_index(drop=True)
+
+    return train_df, val_df, test_df

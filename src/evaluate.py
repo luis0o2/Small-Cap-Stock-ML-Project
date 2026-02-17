@@ -1,3 +1,4 @@
+#EVALUATE.PY
 import numpy as np
 from sklearn.metrics import classification_report, confusion_matrix
 
@@ -54,37 +55,30 @@ def actions_from_proba(probs, p_long, p_short, delta=0.10):
     if probs.ndim != 2 or probs.shape[1] != 3:
         raise ValueError(f"Expected probs shape (N,3). Got {probs.shape}")
 
-    # Extract class probabilities
     p_short_col = probs[:, 0]
     p_no_col    = probs[:, 1]
     p_long_col  = probs[:, 2]
 
-    # Winner class index: 0=SHORT, 1=NO, 2=LONG
-    winner = np.argmax(probs, axis=1)
+    winner = np.argmax(probs, axis=1)  # 0=SHORT, 1=NO, 2=LONG
+    actions = np.zeros(len(probs), dtype=int)
 
-    actions = np.zeros(len(probs), dtype=int)  # default NO_TRADE
-
-    # --- NEW: margin conditions ---
     long_margin  = p_long_col - p_no_col
     short_margin = p_short_col - p_no_col
 
-    # LONG decision
     long_mask = (
-        (winner == 2) &                 # LONG is most likely
-        (p_long_col >= p_long) &        # absolute confidence
-        (long_margin >= delta)          # confidence gap vs NO_TRADE
+        (winner == 2) &
+        (p_long_col >= p_long) &
+        (long_margin >= delta)
     )
 
-    # SHORT decision
     short_mask = (
-        (winner == 0) &                 # SHORT is most likely
-        (p_short_col >= p_short) &      # absolute confidence
-        (short_margin >= delta)         # confidence gap vs NO_TRADE
+        (winner == 0) &
+        (p_short_col >= p_short) &
+        (short_margin >= delta)
     )
 
     actions[long_mask] = 1
     actions[short_mask] = -1
-
     return actions
 
 
@@ -150,34 +144,45 @@ def summarize_backtest(actions, future_returns, cost_bps: float = 3.0):
         "profit_factor": profit_factor,
         "total_return": total_return,
     }
+    
+def side_breakdown(actions, future_returns, cost_bps: float = 3.0):
+    actions = np.asarray(actions, dtype=int)
+    r = np.asarray(future_returns, dtype=float)
+    cost = cost_bps / 10_000.0
+
+    out = {}
+    for side, name in [(1, "LONG"), (-1, "SHORT")]:
+        m = actions == side
+        if m.sum() == 0:
+            out[name] = {"trades": 0, "avg": 0.0, "total": 0.0, "win_rate": 0.0}
+            continue
+        pnl = side * r[m] - cost
+        out[name] = {
+            "trades": int(m.sum()),
+            "avg": float(pnl.mean()),
+            "total": float(pnl.sum()),
+            "win_rate": float((pnl > 0).mean()),
+        }
+    return out
 
 
 def threshold_sweep(
     probs,
     future_returns=None,
     thresholds=(0.50, 0.55, 0.60, 0.65),
-    delta: float = 0.10,            # <-- add this
+    delta: float = 0.10,
     cost_bps: float = 3.0,
+    min_trades: int = 20,   # <-- add
     title: str = "Threshold sweep",
 ):
-    """
-    Sweep thresholds for LONG/SHORT decisions and print trade stats.
-
-    probs: (N,3) probabilities aligned to [-1,0,1]
-    future_returns: optional returns array; if provided, prints backtest summary too
-    thresholds: iterable of thresholds to try for BOTH p_long and p_short
-
-    If future_returns is None, we only print trade counts.
-    """
     probs = np.asarray(probs, dtype=float)
-
     print(f"\n=== {title} ===")
 
-    best = None  # stores (pL, pS, stats_dict) when returns are provided
+    best = None  # (pL, pS, stats)
 
     for pL in thresholds:
         for pS in thresholds:
-            actions = actions_from_proba(probs, p_long=pL, p_short=pS)
+            actions = actions_from_proba(probs, p_long=pL, p_short=pS, delta=delta)
             trades = int((actions != 0).sum())
 
             if future_returns is None:
@@ -192,12 +197,13 @@ def threshold_sweep(
                 f"total_return={stats['total_return']:+.3f}"
             )
 
-            # Choose best by profit factor (you can change criteria later)
-            if best is None or stats["profit_factor"] > best[2]["profit_factor"]:
-                best = (pL, pS, stats)
+            # only consider configs with enough trades
+            if stats["num_trades"] >= min_trades:
+                if best is None or stats["avg_trade"] > best[2]["avg_trade"]:
+                    best = (pL, pS, stats)
 
     if best is not None and future_returns is not None:
         pL, pS, stats = best
-        print(f"\nBest by profit_factor: pL={pL:.2f}, pS={pS:.2f} -> {stats}")
+        print(f"\nBest by avg_trade (min_trades={min_trades}): pL={pL:.2f}, pS={pS:.2f} -> {stats}")
 
     return best
