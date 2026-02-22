@@ -41,44 +41,19 @@ def evaluate_classifier(y_true, y_pred, *, title: str = "Validation"):
     # Return cm in case you want to use it elsewhere (optional)
     return cm
 
-
-def actions_from_proba(probs, p_long, p_short, delta=0.10):
-    """
-    Convert probabilities into trading actions {-1, 0, 1}
-    using BOTH absolute confidence and a margin vs NO_TRADE.
-
-    probs columns must be ordered as:
-    [P(SHORT), P(NO_TRADE), P(LONG)]
-    """
+def actions_from_proba(probs, p_long, p_short=None, delta=0.10):
     probs = np.asarray(probs, dtype=float)
 
-    if probs.ndim != 2 or probs.shape[1] != 3:
-        raise ValueError(f"Expected probs shape (N,3). Got {probs.shape}")
+    p_no   = probs[:, 1]
+    p_long_col = probs[:, 2]
+    winner = np.argmax(probs, axis=1)
 
-    p_short_col = probs[:, 0]
-    p_no_col    = probs[:, 1]
-    p_long_col  = probs[:, 2]
-
-    winner = np.argmax(probs, axis=1)  # 0=SHORT, 1=NO, 2=LONG
     actions = np.zeros(len(probs), dtype=int)
 
-    long_margin  = p_long_col - p_no_col
-    short_margin = p_short_col - p_no_col
-
-    long_mask = (
-        (winner == 2) &
-        (p_long_col >= p_long) &
-        (long_margin >= delta)
-    )
-
-    short_mask = (
-        (winner == 0) &
-        (p_short_col >= p_short) &
-        (short_margin >= delta)
-    )
+    long_margin = p_long_col - p_no
+    long_mask = (p_long_col >= p_long) & (long_margin >= delta)
 
     actions[long_mask] = 1
-    actions[short_mask] = -1
     return actions
 
 
@@ -147,6 +122,7 @@ def summarize_backtest(actions, future_returns, cost_bps: float = 3.0):
     
     
 
+
 def long_only_baseline(future_returns, cost_bps: float = 3.0):
     r = np.asarray(future_returns, dtype=float)
     cost = cost_bps / 10_000.0
@@ -185,45 +161,43 @@ def side_breakdown(actions, future_returns, cost_bps: float = 3.0):
         }
     return out
 
-
 def threshold_sweep(
     probs,
     future_returns=None,
-    thresholds=(0.50, 0.55, 0.60, 0.65),
+    p_long_thresholds=(0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65),
     delta: float = 0.10,
     cost_bps: float = 3.0,
-    min_trades: int = 20,   # <-- add
-    title: str = "Threshold sweep",
+    min_trades: int = 80,
+    title: str = "Long-only threshold sweep",
 ):
     probs = np.asarray(probs, dtype=float)
     print(f"\n=== {title} ===")
 
-    best = None  # (pL, pS, stats)
+    best = None  # (pL, stats)
 
-    for pL in thresholds:
-        for pS in thresholds:
-            actions = actions_from_proba(probs, p_long=pL, p_short=pS, delta=delta)
-            trades = int((actions != 0).sum())
+    for pL in p_long_thresholds:
+        actions = actions_from_proba(probs, p_long=pL, delta=delta)
+        trades = int((actions != 0).sum())
 
-            if future_returns is None:
-                print(f"pL={pL:.2f} pS={pS:.2f} trades={trades:4d}")
-                continue
+        if future_returns is None:
+            print(f"pL={pL:.2f} trades={trades:4d}")
+            continue
 
-            stats = summarize_backtest(actions, future_returns, cost_bps=cost_bps)
+        stats = summarize_backtest(actions, future_returns, cost_bps=cost_bps)
 
-            print(
-                f"pL={pL:.2f} pS={pS:.2f} trades={stats['num_trades']:4d} "
-                f"avg_trade={stats['avg_trade']:+.5f} pf={stats['profit_factor']:.3f} "
-                f"total_return={stats['total_return']:+.3f}"
-            )
+        print(
+            f"pL={pL:.2f} trades={stats['num_trades']:4d} "
+            f"avg_trade={stats['avg_trade']:+.5f} pf={stats['profit_factor']:.3f} "
+            f"total_return={stats['total_return']:+.3f}"
+        )
 
-            # only consider configs with enough trades
-            if stats["num_trades"] >= min_trades:
-                if best is None or stats["avg_trade"] > best[2]["avg_trade"]:
-                    best = (pL, pS, stats)
+        if stats["num_trades"] >= min_trades:
+            if best is None or stats["avg_trade"] > best[1]["avg_trade"]:
+                best = (pL, stats)
+    
 
     if best is not None and future_returns is not None:
-        pL, pS, stats = best
-        print(f"\nBest by avg_trade (min_trades={min_trades}): pL={pL:.2f}, pS={pS:.2f} -> {stats}")
+        pL, stats = best
+        print(f"\nBest by avg_trade (min_trades={min_trades}): pL={pL:.2f} -> {stats}")
 
     return best
