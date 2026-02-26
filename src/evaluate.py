@@ -1,5 +1,7 @@
 #EVALUATE.PY
 import numpy as np
+import pandas as pd
+
 from sklearn.metrics import classification_report, confusion_matrix
 
 # Force a consistent label order everywhere so metrics are comparable.
@@ -41,19 +43,16 @@ def evaluate_classifier(y_true, y_pred, *, title: str = "Validation"):
     # Return cm in case you want to use it elsewhere (optional)
     return cm
 
-def actions_from_proba(probs, p_long, p_short=None, delta=0.10):
-    probs = np.asarray(probs, dtype=float)
+def actions_from_proba(probs, p_long, delta=None, p_short=None):
+    # probs shape: (n, 2)
+    p_not_long = probs[:, 0]
+    p_long_prob = probs[:, 1]
 
-    p_no   = probs[:, 1]
-    p_long_col = probs[:, 2]
-    winner = np.argmax(probs, axis=1)
+    actions = np.zeros(len(probs))
 
-    actions = np.zeros(len(probs), dtype=int)
-
-    long_margin = p_long_col - p_no
-    long_mask = (p_long_col >= p_long) & (long_margin >= delta)
-
+    long_mask = (p_long_prob >= p_long) & ((p_long_prob - p_not_long) > delta)
     actions[long_mask] = 1
+
     return actions
 
 
@@ -201,3 +200,82 @@ def threshold_sweep(
         print(f"\nBest by avg_trade (min_trades={min_trades}): pL={pL:.2f} -> {stats}")
 
     return best
+
+def cross_sectional_backtest(
+    df: pd.DataFrame,
+    prob_col: str,
+    return_col: str,
+    top_frac: float = 0.15,
+    max_position_size: float = 0.10,   # 10% capital per stock
+    slippage: float = 0.01,            # 1% slippage
+    cost_bps: float = 30.0,            # 30 bps transaction cost
+):
+    """
+    Realistic cross-sectional long-only simulator.
+
+    - Caps position size per stock
+    - Applies slippage + transaction cost
+    - Compounds capital realistically
+    """
+
+    strategy_daily = []
+    baseline_daily = []
+
+    capital = 1.0
+    equity_curve = []
+
+    cost = cost_bps / 10_000.0
+
+    for date, group in df.groupby("datetime"):
+
+        if len(group) < 5:
+            continue
+
+        k = max(1, int(top_frac * len(group)))
+
+        top = group.sort_values(prob_col, ascending=False).head(k)
+
+        # Equal weight within top picks, but capped at max_position_size
+        weight_per_stock = min(max_position_size, 1.0 / k)
+
+        daily_portfolio_return = 0.0
+
+        for r in top[return_col]:
+            # Apply slippage + cost
+            r_adj = r - slippage - cost
+            daily_portfolio_return += weight_per_stock * r_adj
+
+        # Capital update
+        capital *= (1.0 + daily_portfolio_return)
+        equity_curve.append(capital)
+
+        strategy_daily.append(daily_portfolio_return)
+        baseline_daily.append(group[return_col].mean())
+
+    strategy_daily = np.array(strategy_daily)
+    baseline_daily = np.array(baseline_daily)
+    equity_curve = np.array(equity_curve)
+
+    # === Metrics ===
+    total_return = equity_curve[-1] - 1.0 if len(equity_curve) > 0 else 0.0
+
+    peak = np.maximum.accumulate(equity_curve)
+    drawdown = (equity_curve - peak) / peak
+    max_dd = drawdown.min() if len(drawdown) > 0 else 0.0
+
+    sharpe = (
+        strategy_daily.mean() / strategy_daily.std()
+        if strategy_daily.std() > 0 else 0.0
+    )
+
+    return {
+        "strategy_avg": strategy_daily.mean(),
+        "strategy_std": strategy_daily.std(),
+        "baseline_avg": baseline_daily.mean(),
+        "excess": strategy_daily.mean() - baseline_daily.mean(),
+        "positive_rate": (strategy_daily > baseline_daily).mean(),
+        "num_days": len(strategy_daily),
+        "total_return": total_return,
+        "max_drawdown": max_dd,
+        "sharpe_daily": sharpe,
+    }

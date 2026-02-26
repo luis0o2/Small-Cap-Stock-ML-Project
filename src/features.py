@@ -13,40 +13,59 @@ def build_word_vectorizer():
     )
 
 def add_technical_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Adds per-ticker technical features computed from price_now using only past/current info.
-    Assumes df has columns: datetime, ticker, price_now
-    Returns a COPY with new numeric feature columns.
-    """
+
     out = df.copy()
 
     out["datetime"] = pd.to_datetime(out["datetime"], errors="coerce")
     out = out.dropna(subset=["datetime", "ticker", "price_now"]).copy()
     out = out.sort_values(["ticker", "datetime"]).reset_index(drop=True)
 
-    def _per_ticker(g: pd.DataFrame) -> pd.DataFrame:
-        p = g["price_now"].astype(float)
+    # Compute features WITHOUT groupby.apply
+    out["ret_1"]  = out.groupby("ticker")["price_now"].pct_change(1)
+    out["ret_5"]  = out.groupby("ticker")["price_now"].pct_change(5)
+    out["ret_10"] = out.groupby("ticker")["price_now"].pct_change(10)
 
-        # returns (uses current + past only)
-        g["ret_1"]  = p.pct_change(1)
-        g["ret_5"]  = p.pct_change(5)
-        g["ret_10"] = p.pct_change(10)
+    out["vol_5"]  = out.groupby("ticker")["ret_1"].rolling(5).std().reset_index(level=0, drop=True)
+    out["vol_10"] = out.groupby("ticker")["ret_1"].rolling(10).std().reset_index(level=0, drop=True)
 
-        # rolling volatility of daily returns
-        r1 = g["ret_1"]
-        g["vol_5"]  = r1.rolling(5, min_periods=5).std()
-        g["vol_10"] = r1.rolling(10, min_periods=10).std()
+    ma10 = out.groupby("ticker")["price_now"].rolling(10).mean().reset_index(level=0, drop=True)
+    out["ma10_dist"] = (out["price_now"] / ma10) - 1.0
 
-        # moving average distance
-        ma_10 = p.rolling(10, min_periods=10).mean()
-        g["ma10_dist"] = (p / ma_10) - 1.0
-
-        return g
-
-    out = out.groupby("ticker", group_keys=False).apply(_per_ticker)
-
-    # Replace early NaNs (not enough history) with 0.0
     tech_cols = ["ret_1","ret_5","ret_10","vol_5","vol_10","ma10_dist"]
     out[tech_cols] = out[tech_cols].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    return out
+
+def add_market_features(df: pd.DataFrame, spy_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds market regime features computed from SPY.
+    Uses only past/current info.
+    """
+
+    m = spy_df.copy().sort_values("datetime")
+
+    p = m["spy_close"].astype(float)
+
+    # 5-day market return
+    m["mkt_ret_5"] = p.pct_change(5)
+
+    # 10-day volatility of daily returns
+    daily_ret = p.pct_change(1)
+    m["mkt_vol_10"] = daily_ret.rolling(10, min_periods=10).std()
+
+    # distance from 10-day MA
+    ma10 = p.rolling(10, min_periods=10).mean()
+    m["mkt_ma10_dist"] = (p / ma10) - 1.0
+
+    m = m[["datetime", "mkt_ret_5", "mkt_vol_10", "mkt_ma10_dist"]]
+
+    out = df.merge(m, on="datetime", how="left")
+
+    market_cols = ["mkt_ret_5", "mkt_vol_10", "mkt_ma10_dist"]
+    out[market_cols] = (
+        out[market_cols]
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
 
     return out
