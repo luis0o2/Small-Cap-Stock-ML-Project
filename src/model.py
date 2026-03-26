@@ -98,4 +98,4 @@ def train_xgb(
         verbose=False,
     )
 
-    return TradingXGBModel(model=model)
+    return model

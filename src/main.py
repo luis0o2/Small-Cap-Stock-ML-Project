@@ -103,6 +103,11 @@ def main():
         y_val=y_val,
         use_class_weights=True
     )
+    import joblib
+    joblib.dump(model, "model.pkl")
+    joblib.dump(vectorizer, "tfidf.pkl")
+    joblib.dump(scaler, "scaler.pkl")
+    print("Model, vectorizer, and scaler saved!")
 
     # ==========================================================
     # 7) VALIDATION DIAGNOSTICS (CLASSIFICATION ONLY)
