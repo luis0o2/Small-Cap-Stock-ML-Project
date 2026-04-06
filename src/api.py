@@ -107,3 +107,15 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+        @app.get("/summary")
+        def get_summary():
+            snapshot = app_state.snapshot()
+            return {
+                "running": snapshot["running"],
+                "market_open": snapshot["market_open"],
+                "last_cycle_utc": snapshot["last_cycle_utc"],
+                "top_candidates": snapshot["top_candidates"],
+                "positions": snapshot["positions"],
+                "last_error": snapshot["last_error"],
+            }
